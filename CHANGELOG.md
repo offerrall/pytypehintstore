@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.0.3]
+
+One library on both platforms: the lock now holds the same contract on POSIX
+that it held on Windows, and the checker agrees on both.
+
+- The lock is settled by the operating system on POSIX too. It was an open
+  handle on Windows — a file Windows will not unlink while it is open — and a
+  bare `O_EXCL` everywhere else, which POSIX does not defend: two processes
+  reaching for one orphaned lockfile could both unlink it and both create their
+  own, ending as two live owners of one file. POSIX now takes an advisory
+  `flock`, which the kernel drops when a process dies, and checks the inode
+  afterwards in case the file was replaced between the open and the lock.
+- An orphan needs no stealing on POSIX: what makes it an orphan is that its
+  `flock` died with its owner. The behaviour a caller sees is unchanged — one
+  owner, orphans reclaimed, the same message naming the live PID.
+- `release` unlinks before closing on POSIX and after closing on Windows, each
+  being the order that cannot hand a second owner the lock.
+- `mypy` passes on both platforms. The Windows probe is declared under
+  `sys.platform` rather than `os.name`, which is the form a checker reads as a
+  platform guard, so `ctypes.WinDLL` is not looked for on Linux.
+- CI runs the suite on `ubuntu-latest` and `windows-latest`, over 3.11, 3.12
+  and 3.13. Half of the lock only exists on one of them.
+- New test: two processes reaching for one orphan at the same instant leave a
+  single owner. It is the property both halves exist to hold, and it runs on
+  both.
+
 ## [0.0.2]
 
 Out of a stress campaign: 1150 generated schemas, four adversarial fronts, and

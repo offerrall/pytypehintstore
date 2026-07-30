@@ -230,10 +230,11 @@ database server — this is not one.
 ```
 
 A lockfile left by a crash names a PID that no longer runs, and the next process
-takes it over; so does one whose contents say nothing. Because the descriptor
-stays open, two processes racing for the same orphan cannot both end up owning
-it. Two different classes in one directory are two files and two locks, and
-never meet.
+takes it over; so does one whose contents say nothing. Two processes racing for
+the same orphan cannot both end up owning it: the operating system settles it,
+not an agreement between readers — an open handle Windows will not unlink, an
+advisory `flock` the kernel drops when a process dies on POSIX. Two different
+classes in one directory are two files and two locks, and never meet.
 
 ## API
 
@@ -269,7 +270,10 @@ travel out of `add` and `put` exactly as the core raised them.
 
 ## Known limits
 
-- **One process.** The lock enforces it.
+- **One process.** The lock enforces it. Deleting the lockfile by hand while a
+  store is open is the one way past it, and the two platforms differ there:
+  Windows refuses the deletion, POSIX allows it and the exclusion is lost until
+  both processes end. Delete a lockfile only when nothing is holding it.
 - **Everything in memory.** The file is read once at startup and rewritten whole
   on every dump. Thousands of rows, not millions.
 - **Ids are auto-incrementing ints, never recycled.**

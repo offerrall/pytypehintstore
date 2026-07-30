@@ -364,6 +364,61 @@ def test_the_lock_of_an_owner_that_was_killed_is_taken_over(
     assert lock_path_of(store.path).read_text(encoding="utf-8") == str(os.getpid())
 
 
+# ---- the race the two platforms settle differently and answer alike --------
+
+# Two processes that reach for the same orphan at the same instant. They wait on
+# a wall-clock deadline rather than on each other, because the point is to
+# overlap inside `acquire`, and a handshake would serialise exactly the window
+# under test.
+RACER = """
+    import time
+
+    from shared import Task
+    from pytypehintstore import store_of, StoreLockedError
+
+    while time.time() < {start!r}:
+        pass
+
+    try:
+        store = store_of(Task, {directory!r})
+    except StoreLockedError:
+        print("locked", flush=True)
+    else:
+        print("owns", flush=True)
+        time.sleep(1.0)
+        store.close()
+"""
+
+
+def test_two_processes_reaching_for_one_orphan_leave_a_single_owner(
+        store_dir, file_of, lock_of, spawn_python):
+    """The property both platforms have to hold, by different means.
+
+    Windows settles it with O_EXCL over a handle that cannot be unlinked while
+    it is open; POSIX with an advisory flock the kernel drops when a process
+    dies, plus an inode check for the file being replaced underneath. What a
+    caller sees is the same either way: one owner, and everyone else told so.
+
+    The lockfile says nothing, which is the honest way to make an orphan — a
+    dead PID could be recycled between writing it and reading it.
+    """
+    import time
+
+    lock = lock_of(file_of(Task, store_dir))
+    lock.write_text("not a pid at all", encoding="utf-8")
+
+    start = time.time() + 1.0
+    racers = [spawn_python(child(RACER.format(start=start,
+                                              directory=str(store_dir))))
+              for _ in range(2)]
+
+    verdicts = sorted(racer.communicate(timeout=DEADLINE)[0].strip()
+                      for racer in racers)
+
+    assert verdicts == ["locked", "owns"], (
+        f"the orphan was claimed by {verdicts.count('owns')} processes")
+
+
 # ---- the descriptor the owner keeps ----------------------------------------
 
 @pytest.mark.skipif(os.name != "nt",

@@ -11,9 +11,14 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Both, because the lock is the one part written twice: an open handle on
+    # Windows, an advisory flock on POSIX. A single runner would leave half of
+    # it untested.
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
