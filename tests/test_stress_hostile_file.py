@@ -710,11 +710,15 @@ def test_a_corrupt_copy_stamped_in_the_future_is_kept_as_the_newest(
         f"the prune kept {[p.name for p in rotated(cell_file)]}")
 
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="on POSIX the flock is the evidence, not the pid: "
+                           "see the twin below")
 def test_a_lockfile_carrying_this_very_process_id_refuses_the_open(
         store_dir, cell_file, lock_of, open_store):
-    """A crash, then a pid the operating system handed out again — to us. There
-    is nothing in the file to tell that apart from a second live worker, and the
-    store does the only safe thing: it names the owner and refuses.
+    """A crash, then a pid the operating system handed out again — to us. On
+    Windows there is nothing in the file to tell that apart from a second live
+    worker, and the store does the only safe thing: it names the owner and
+    refuses.
 
     Documented rather than judged. The accusation is correct as far as the
     evidence goes, it just happens to point at the reader; the message already
@@ -731,4 +735,25 @@ def test_a_lockfile_carrying_this_very_process_id_refuses_the_open(
         f"process; you are probably running several workers. Run a single "
         f"worker, or reach for a database server — this is not one.")
     assert lock.exists(), "a lock the store did not take was removed anyway"
+    assert lock.read_text(encoding="utf-8") == str(os.getpid())
+
+
+@pytest.mark.skipif(os.name == "nt",
+                    reason="the twin above: on Windows the pid is the evidence")
+def test_a_lockfile_nobody_holds_is_taken_over_whatever_pid_it_names(
+        store_dir, cell_file, lock_of, open_store):
+    """On POSIX the lock is the `flock`, and a pid is only what the message
+    quotes. A lockfile naming a live process that is not holding it — a crash
+    plus a recycled pid, or a file written by hand — is an orphan, and taking
+    it over is right: the process it names is demonstrably not the owner.
+
+    This is where the two platforms part, and POSIX has the better half of it:
+    a recycled pid cannot lock a path out here.
+    """
+    lock = lock_of(cell_file)
+    lock.write_text(str(os.getpid()), encoding="utf-8")
+
+    store = open_store(Cell, store_dir)
+
+    assert store.add(a_cell()) == 1
     assert lock.read_text(encoding="utf-8") == str(os.getpid())

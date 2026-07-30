@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.0.3]
+## [0.0.4]
 
 One library on both platforms: the lock now holds the same contract on POSIX
 that it held on Windows, and the checker agrees on both.
@@ -25,6 +25,10 @@ that it held on Windows, and the checker agrees on both.
 - New test: two processes reaching for one orphan at the same instant leave a
   single owner. It is the property both halves exist to hold, and it runs on
   both.
+- One difference is left, and declared: with a lockfile nobody is holding, POSIX
+  trusts the `flock` and takes it over — so a recycled pid cannot lock a path
+  out there — while Windows trusts the pid written in it and refuses. Two live
+  stores behave identically on both.
 
 ## [0.0.2]
 

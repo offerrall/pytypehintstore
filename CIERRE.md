@@ -251,9 +251,13 @@ nombre y distinto contrato — que es el contrato hecho visible.
   router de valores del core, que es privado; la alternativa sería reimplementar
   las restricciones en el codec, es decir, el segundo validador que el diseño
   no quiere. Está en el README, en 13 xfail estrictos y en `INFORME.md`.
-- **POSIX.** Todo se midió en Windows 11. La carrera de los dos dueños del
-  lockfile está cerrada aquí porque un archivo abierto no se puede borrar; en
-  POSIX sí. Anotado desde la auditoría anterior.
+- ~~**POSIX.** La carrera de los dos dueños del lockfile está cerrada en Windows
+  porque un archivo abierto no se puede borrar; en POSIX sí.~~ **Cerrado en
+  0.0.4**: POSIX toma un `flock` que el kernel suelta al morir el proceso, más
+  una comprobación de inodo. La suite corre ahora en `ubuntu-latest` y
+  `windows-latest`. Queda una diferencia declarada, con test por plataforma: un
+  lockfile que nadie sostiene lo toma POSIX (el `flock` es la evidencia) y lo
+  respeta Windows (el PID lo es).
 - **El traceback compartido del segundo `close()`** (cosmético, ya declarado).
 - **`INFORME.md`** se queda en el repo con el detalle de la campaña; dime si
   prefieres que se vaya con este `CIERRE.md`.

@@ -270,10 +270,14 @@ travel out of `add` and `put` exactly as the core raised them.
 
 ## Known limits
 
-- **One process.** The lock enforces it. Deleting the lockfile by hand while a
-  store is open is the one way past it, and the two platforms differ there:
-  Windows refuses the deletion, POSIX allows it and the exclusion is lost until
-  both processes end. Delete a lockfile only when nothing is holding it.
+- **One process.** The lock enforces it. Two live stores behave the same
+  everywhere; what differs is a lockfile nobody is holding. On POSIX the `flock`
+  is the evidence, so a file naming a live process that is not holding it — a
+  crash plus a recycled pid — is taken over, and a recycled pid cannot lock a
+  path out. On Windows the pid is the evidence, so that file is respected and
+  the way out is to delete it by hand. And deleting it *while* a store holds it
+  is refused by Windows but allowed by POSIX, where the exclusion is then lost
+  until both processes end: delete a lockfile only when nothing is holding it.
 - **Everything in memory.** The file is read once at startup and rewritten whole
   on every dump. Thousands of rows, not millions.
 - **Ids are auto-incrementing ints, never recycled.**

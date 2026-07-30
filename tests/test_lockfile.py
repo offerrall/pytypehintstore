@@ -210,33 +210,24 @@ def test_a_lockfile_that_names_no_process_is_taken_over(
 
 def test_a_lock_that_keeps_coming_back_is_reported_as_retaken(
         monkeypatch, open_store, store_dir, store_file):
-    """A rival that puts the lockfile straight back is refused, not looped on.
+    """A rival that keeps the lock out of reach is refused, not looped on.
 
-    The interleaving: `acquire` finds the file, reads a PID that names nobody,
-    removes it — and between that removal and its second `os.open` the rival
-    creates the file again. Round two sees exactly what round one saw, and the
-    bounded loop turns what would otherwise be a silent spin into a refusal
-    naming the file to delete by hand.
+    Whatever settles ownership on this platform — `O_EXCL` over a handle Windows
+    will not unlink, an advisory `flock` on POSIX — a rival fast enough to win
+    every round would leave `acquire` spinning forever. The loop is bounded
+    instead, and what comes out is a refusal naming the file to delete by hand.
 
-    Standing in for the module's own `os` keeps the pretence inside `acquire`:
-    the real `os` is what everything else, this test included, still uses. Only
-    `unlink` is impersonated, so the `O_EXCL` that decides ownership is the
-    real one, against a file that is really there.
+    The claim is what is impersonated, because it is the one step both platforms
+    agree on: it either hands back a descriptor or says the lock is not ours.
+    Everything else in `acquire` — reading the PID, judging it, the bound on the
+    loop — is the real thing.
     """
     import pytypehintstore.lockfile as lockfile
 
     lock = lock_path_of(store_file)
     lock.write_text("not a pid", encoding="utf-8")
 
-    class Rival:
-        def __getattr__(self, name):
-            return getattr(os, name)
-
-        def unlink(self, path):
-            os.unlink(path)
-            lock.write_text("not a pid", encoding="utf-8")
-
-    monkeypatch.setattr(lockfile, "os", Rival())
+    monkeypatch.setattr(lockfile, "_claim", lambda held: None)
 
     with pytest.raises(StoreLockedError) as info:
         open_store(Task, store_dir)
@@ -308,6 +299,9 @@ def test_alive_is_true_for_the_process_asking():
     assert alive(os.getpid()) is True
 
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="259 is STILL_ACTIVE, a Windows number: POSIX keeps "
+                           "the low byte of an exit code and reports 3")
 def test_alive_is_false_for_a_child_that_exited_with_the_still_running_code(
         spawn_python):
     """A finished process is dead however it chose to say goodbye.
