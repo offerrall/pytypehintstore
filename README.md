@@ -20,7 +20,7 @@ Not on PyPI yet. From a clone of the repository:
 pip install -e .
 ```
 
-That brings [`pytypehint`](https://pypi.org/project/pytypehint/) with it, the
+That brings [`pytypehint`](https://github.com/offerrall/pytypehint) with it, the
 only dependency. Stdlib otherwise. Python 3.11+, `py.typed` included.
 
 ## Quick start
