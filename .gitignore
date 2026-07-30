@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+
+# What the example leaves behind: its directory, the store and the copies it
+# rotates, plus a part file from a dump that never landed.
+data/
+*.json.lock
+*.json.part
+tasks.json
+tasks.*.json
