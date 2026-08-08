@@ -1,5 +1,9 @@
 # pytypehintstore
 
+[![PyPI version](https://img.shields.io/pypi/v/pytypehintstore.svg)](https://pypi.org/project/pytypehintstore/)
+[![Python](https://img.shields.io/pypi/pyversions/pytypehintstore.svg)](https://pypi.org/project/pytypehintstore/)
+[![License](https://img.shields.io/pypi/l/pytypehintstore.svg)](LICENSE)
+
 Rows of one validated dataclass, in memory, shadowed by a JSON file you can open
 and edit. **The class is the database.**
 
