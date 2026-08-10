@@ -30,7 +30,7 @@ import pytest
 from pytypehint import SchemaTypeError, SchemaValueError, struct_of
 
 from pytypehintstore import StoreLoadError, store_of
-from pytypehintstore.codec import decode, encode
+from pytypehintstore.codec import encode
 
 
 # ---- the shapes ------------------------------------------------------------
@@ -174,7 +174,7 @@ class Payloadish:
 def trip(cls, obj):
     """P4: through encode, JSON text, decode and back through the schema."""
     schema = struct_of(cls)
-    return schema.build(decode(schema, json.loads(json.dumps(encode(schema, obj)))))
+    return schema.build(schema.decode(json.loads(json.dumps(encode(schema, obj)))))
 
 
 def strict(text):

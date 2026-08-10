@@ -37,7 +37,6 @@ import pytest
 
 from pytypehint import struct_of
 from pytypehintstore import StoreLoadError, StoreLockedError
-from pytypehintstore.codec import decode
 from shared import Bag
 
 ROWS = 10_000
@@ -123,7 +122,7 @@ def core_says(cls, row) -> str:
     schema = struct_of(cls)
 
     with pytest.raises((TypeError, ValueError)) as failure:
-        schema.build(decode(schema, row))
+        schema.build(schema.decode(row))
 
     return str(failure.value)
 
@@ -414,28 +413,29 @@ def test_text_that_is_not_a_date_stays_text_and_the_core_refuses_the_row(
     assert message == f"{cell_file}: row 1: day: expected date, got str"
 
 
-@pytest.mark.parametrize("text, means", [
-    ("20260101", date(2026, 1, 1)),
-    ("2026-W01-1", date(2025, 12, 29)),
-], ids=["the basic format", "an ISO week date"])
-def test_a_date_python_can_read_loads_and_is_rewritten_in_the_extended_format(
-        open_store, store_dir, by_hand, until, rows_of, text, means, cell_file):
-    """A known limit, not a defect of the store: `date.fromisoformat` has parsed
-    the whole of ISO 8601 since 3.11, so these are dates and the row is sound.
+@pytest.mark.parametrize("text", ["20260101", "2026-W01-1"],
+                         ids=["the basic format", "an ISO week date"])
+def test_a_date_in_any_other_iso_spelling_is_refused_rather_than_rewritten(
+        open_store, store_dir, by_hand, cell_file, text):
+    """The known limit that used to live here, closed by the core in 1.0.0.
 
-    The transport is narrower than the parser, so the next dump writes the day
-    back in the one form the store emits — a week date silently becomes the
-    Monday it names, in another year. Worth knowing before hand-editing dates.
+    `date.fromisoformat` has parsed the whole of ISO 8601 since 3.11, so these
+    used to load — and the next dump wrote the day back in the single form the
+    store emits, which turned a week date into the Monday it names, in another
+    year, without a word. The core no longer delegates to that parser: `Date`
+    takes `YYYY-MM-DD` and nothing else, because the two ISO grammars overlap
+    and letting the text of a value pick an option is the thing it refuses. So
+    the spelling is refused out loud instead of being read and silently
+    rewritten, which is the outcome a file a person edits deserves.
     """
-    by_hand(Cell, store_dir, [cell_row(day=text)])
-    store = open_store(Cell, store_dir, debounce=0.0)
+    row = cell_row(day=text)
+    by_hand(Cell, store_dir, [row])
 
-    assert store.all() == [(1, a_cell(day=means))]
+    with pytest.raises(StoreLoadError) as failure:
+        open_store(Cell, store_dir, debounce=0.0)
 
-    store.add(a_cell(n=2))
-
-    assert until(lambda: rows_of(cell_file)["1"]["day"] == means.isoformat()), (
-        "the day was expected to come back in the extended format")
+    assert str(failure.value) == f"{cell_file}: row 1: {core_says(Cell, row)}"
+    assert "day: expected date, got str" in str(failure.value)
 
 
 # ---- an enum member that is not one -----------------------------------------

@@ -13,9 +13,9 @@ import threading
 import time
 from pathlib import Path
 
-from pytypehint import List, SchemaTypeError, SchemaValueError, Struct, struct_of
+from pytypehint import SchemaTypeError, SchemaValueError, struct_of
 
-from pytypehintstore.codec import decode, encode
+from pytypehintstore.codec import encode
 from pytypehintstore.errors import StoreError, StoreLoadError
 from pytypehintstore.fingerprint import fingerprint
 from pytypehintstore.lockfile import acquire, release
@@ -46,7 +46,6 @@ class Store:
 
         self._path = folder / name
         self._name = str(Path(directory) / name)
-        self._ambiguous()
         self._debounce = float(debounce)
         self._keep = int(keep)
 
@@ -166,24 +165,6 @@ class Store:
         if self._closed:
             raise StoreError(f"{self._name}: store is closed")
 
-    # Two options of one union that answer to the same transport name are
-    # indistinguishable in the file: the wrapper names an option and the reader
-    # takes the first that answers. The core allows the pair — an enum class
-    # called `date` competes with `date` itself, in different namespaces to it —
-    # so the store refuses at the door rather than routing a value to the wrong
-    # branch and handing back something nobody stored.
-    def _ambiguous(self) -> None:
-        found = _shared_name((self._schema,), (), set())
-
-        if found is None:
-            return
-
-        path, shared = found
-        where = ": ".join(path)
-        raise StoreError(
-            f"{self._name}: {where}: two options of a union share the transport "
-            f"name {shared!r}: rename one of the classes")
-
     # A row is accepted by making the round trip it will make anyway. What comes
     # back is what the store keeps; what build() refuses travels out in the
     # core's own words.
@@ -193,7 +174,7 @@ class Store:
                 f"expected {self._cls.__name__}, got {type(obj).__name__}")
 
         row = encode(self._schema, obj)
-        built = self._schema.build(decode(self._schema, row))
+        built = self._schema.build(self._schema.decode(row))
 
         # The core has accepted the row; what remains is whether the file can
         # carry it. A lone surrogate is a str Python allows and no encoder can
@@ -366,50 +347,9 @@ class Store:
 
     def _build(self, row_id: int, row):
         try:
-            return self._schema.build(decode(self._schema, row))
+            return self._schema.build(self._schema.decode(row))
         except (TypeError, ValueError) as e:
             raise StoreLoadError(f"{self._name}: row {row_id}: {e}") from e
-
-
-# The first pair of options sharing a transport name, as (path, name), or None.
-# `seen` keeps a recursive schema from being walked forever.
-def _shared_name(shapes, path, seen):
-    names = set()
-
-    for shape in shapes:
-        # A Struct carries its $type inside the object and never competes for
-        # the wrapper's, so a dataclass and an enum may share one name — the
-        # core allows exactly that, and the codec keeps them apart.
-        if type(shape) is Struct:
-            continue
-
-        name = shape.option_id()
-
-        if name in names:
-            return path, name
-
-        names.add(name)
-
-    for shape in shapes:
-        if type(shape) is Struct:
-            if id(shape) in seen:
-                continue
-
-            seen.add(id(shape))
-
-            for field in shape.fields:
-                found = _shared_name(field.shape, (*path, field.name), seen)
-
-                if found is not None:
-                    return found
-
-        elif type(shape) is List:
-            found = _shared_name(shape.item, path, seen)
-
-            if found is not None:
-                return found
-
-    return None
 
 
 def store_of(cls, directory, *, debounce: float = 2.0, keep: int = 5) -> Store:

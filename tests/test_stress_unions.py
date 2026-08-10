@@ -28,7 +28,7 @@ turns green the day the defect goes.
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, time
 from enum import Enum
 from pathlib import Path
@@ -36,8 +36,8 @@ from pathlib import Path
 import pytest
 
 from pytypehint import SchemaTypeError, struct_of
-from pytypehintstore import StoreError, StoreLoadError
-from pytypehintstore.codec import decode, encode
+from pytypehintstore import StoreLoadError
+from pytypehintstore.codec import encode
 
 # --------------------------------------------------------------------------
 # helpers
@@ -52,7 +52,7 @@ def wire_of(cls, obj):
 def p4(cls, obj):
     """P4: build(decode(json.loads(json.dumps(encode(schema, obj)))))."""
     schema = struct_of(cls)
-    return schema.build(decode(schema, wire_of(cls, obj)))
+    return schema.build(schema.decode(wire_of(cls, obj)))
 
 
 def cycle(open_store, store_dir, cls, objs):
@@ -603,12 +603,15 @@ def test_two_dataclasses_with_the_same_field_names_route_by_exact_type(
 
 
 def test_a_list_mixing_both_dataclasses_is_refused_by_add(open_store, store_dir):
-    # No branch holds both, so the encoder names the first and the row does not
-    # validate. add() makes the round trip before it keeps anything, so the
-    # refusal happens in front of the caller and nothing reaches the file.
+    # No branch holds both, so the core's router names none and the list travels
+    # unwrapped for the core to judge — where two list options share the `list`
+    # transport, an unwrapped one is exactly what it asks a discriminator for.
+    # The encoder used to name the first branch instead and be refused an item
+    # at a time; either way the row is refused in front of the caller and
+    # nothing reaches the file, which is the property under test.
     store = open_store(TwinLists, store_dir, debounce=0)
 
-    with pytest.raises(SchemaTypeError, match="expected Shaped, got Twinned"):
+    with pytest.raises(SchemaTypeError, match="ambiguous list"):
         store.add(TwinLists(v=[Shaped(1, "a"), Twinned("1", "b")]))
 
     assert len(store) == 0
@@ -774,35 +777,33 @@ def test_a_same_named_dataclass_in_a_list_and_alone_is_admissible(
     assert [row["v"] for row in rows] == [[{"x": 1}], {"x": "a"}]
 
 
-def test_an_enum_named_str_and_a_str_option_compile_to_one_wire_identity():
-    # Not an assertion about the store yet: the ground the next two tests stand
-    # on. EnumShape.option_id() is the bare class name, so this enum and the Str
-    # beside it both answer "str", and the core lets the schema through — its
-    # duplicate check keys on the Python type, and its discriminator check
-    # guards Struct against Struct and Enum against Enum, never Enum against a
-    # scalar.
-    schema = struct_of(StrThenEnum)
-    ids = [s.option_id() for s in schema.fields[0].shape]
-
-    assert ids == ["str", "str"]
+def test_an_enum_named_str_and_a_str_option_are_one_wire_identity():
+    # The ground the next tests stand on. EnumShape.option_id() is the bare
+    # class name, so this enum and the Str beside it both answer "str" — and
+    # since 1.0.0 that is a schema the core refuses outright rather than one it
+    # compiles and leaves nobody able to round trip.
     assert ShadowStr.__name__ == "str" and ShadowStr is not str
+
+    with pytest.raises(ValueError, match=r"duplicate discriminator name\(s\): str"):
+        struct_of(StrThenEnum)
 
 
 def test_an_enum_sharing_a_transport_name_with_a_scalar_is_refused_at_open(
-        open_store, store_dir, file_of):
-    """The collision cannot lose a row, because there is no store to put one in.
+        open_store, store_dir):
+    """The collision cannot lose a row, because there is no schema to build one.
 
     An enum class named `str` answers to the same wrapper name as the `Str`
-    beside it, so the file could not say which option a row belongs to. This
-    used to store a member and hand back a plain string; now the schema is
-    refused at the door.
+    beside it, so the file could not say which option a row belongs to. The
+    store used to catch this itself when a store was opened; the rule is the
+    core's now, it runs at compilation, and the store neither repeats it nor
+    dresses it up — `store_of` compiles first, so what the caller sees is the
+    core's own words with the core's own coordinates.
     """
-    with pytest.raises(StoreError) as refusal:
+    with pytest.raises(ValueError) as refusal:
         open_store(StrThenEnum, store_dir)
 
     assert str(refusal.value) == (
-        f"{file_of(StrThenEnum, store_dir)}: v: two options of a union share "
-        f"the transport name 'str': rename one of the classes")
+        "Field 'v': duplicate discriminator name(s): str")
 
 
 @pytest.mark.parametrize("cls", [EnumThenDate, DateThenEnum],
@@ -811,18 +812,16 @@ def test_a_date_beside_an_enum_named_date_is_refused_either_way_round(
         open_store, store_dir, cls):
     """Both directions of one collision: a stored date came back as a member,
     and a stored member came back as a date, depending only on which option the
-    union declared first."""
-    with pytest.raises(StoreError, match="share the transport name 'date'"):
+    union declared first. Neither direction compiles now."""
+    with pytest.raises(ValueError, match=r"duplicate discriminator name\(s\): date"):
         open_store(cls, store_dir)
 
 
-def test_a_refused_schema_leaves_nothing_behind(open_store, store_dir, file_of,
-                                                lock_of):
-    """The guard runs before the lock is taken, so a refusal costs nothing."""
-    with pytest.raises(StoreError):
+def test_a_refused_schema_leaves_nothing_behind(open_store, store_dir):
+    """The refusal happens while compiling, before a path or a lock exists."""
+    with pytest.raises(ValueError):
         open_store(StrThenEnum, store_dir)
 
-    assert not lock_of(file_of(StrThenEnum, store_dir)).exists()
     assert list(store_dir.iterdir()) == []
 
 
@@ -910,7 +909,9 @@ def test_list_of_int_and_list_of_float_are_settled_by_their_items(
 def test_a_list_mixing_int_and_float_is_refused_by_add(open_store, store_dir):
     store = open_store(NumberLists, store_dir, debounce=0)
 
-    with pytest.raises(SchemaTypeError, match="expected int, got float"):
+    # As above: no branch accepts a list holding both, so it goes unwrapped and
+    # the core asks for the discriminator it needs.
+    with pytest.raises(SchemaTypeError, match="ambiguous list"):
         store.add(NumberLists(v=[1, 2.0]))
 
     assert len(store) == 0

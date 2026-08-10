@@ -16,10 +16,10 @@ WIRE type, and kept after decode only where the core still needs it — that is,
 where they also collide on the Python type, as `list[str] | list[int]` does.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, make_dataclass, replace
 from datetime import date, time
 from enum import Enum, StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 import pytest
 
@@ -29,7 +29,6 @@ from pytypehint import (
     struct_of,
 )
 from pytypehintstore import StoreLoadError
-from pytypehintstore.codec import decode, encode
 
 
 # ------------------------------------------------------------------- shapes
@@ -299,7 +298,7 @@ def _core_says(cls, row):
     struct = struct_of(cls)
 
     with pytest.raises((SchemaTypeError, SchemaValueError)) as error:
-        struct.build(decode(struct, row))
+        struct.build(struct.decode(row))
 
     return str(error.value)
 
@@ -847,26 +846,139 @@ def test_a_value_the_named_option_cannot_read_keeps_its_wrapper(
 # ------------------------------------------------------------ a declared limit
 
 
-def test_a_union_of_lists_that_differ_only_in_a_limit_can_name_the_wrong_branch(
-        open_store, store_dir, by_hand):
+def test_a_union_of_lists_that_differ_only_in_a_limit_names_the_right_branch(
+        open_store, store_dir, rows_of):
     """A limit, not a type, separates `list[Annotated[str, Max(1)]]` from
-    `list[str | int]`, and the codec picks the branch by reading item TYPES
-    alone: `["ab"]` is a value the schema accepts on the second option, but the
-    file names the first and the core then refuses it. Asking the right question
-    would mean calling the core's private value validator — the core publishes
-    none — so this is a limit of the transport, fixed here on purpose. The
-    evidence that the value is legal: the same list loads when the file names
-    the other option by hand."""
+    `list[str | int]`, and `["ab"]` is legal on the second option only.
+
+    The codec used to choose by reading item types alone and named the first,
+    so the core refused a row it had just called valid — the transport limit
+    the README declared. It now asks `value_branch`, the core's own router,
+    which reads the limits because it calls `_check`, so the file names the
+    branch that accepts the value and the row makes the trip.
+    """
     store = open_store(Narrow, store_dir, debounce=0)
-
-    with pytest.raises(SchemaValueError, match=r"too long: 2 chars, maximum 1"):
-        store.add(Narrow(["ab"]))
-
+    row_id = store.add(Narrow(["ab"]))
     store.close()
-    by_hand(Narrow, store_dir, [{"items": {"$type": "list[str | int]",
-                                    "$value": ["ab"]}}])
 
-    assert open_store(Narrow, store_dir, debounce=0).get(1) == Narrow(["ab"])
+    assert rows_of(store.path) == {
+        "1": {"items": {"$type": "list[str | int]", "$value": ["ab"]}}}
+    assert open_store(Narrow, store_dir, debounce=0).get(row_id) == Narrow(["ab"])
+
+
+_DECODE_CONTRACT = [
+    # (label, annotation, wire, what the store needs decode to hand back)
+    ("a date in the canonical spelling", date, "2026-08-10", date(2026, 8, 10)),
+    ("a date in any other spelling", date, "20260101", "20260101"),
+    ("an ISO week date", date, "2026-W01-1", "2026-W01-1"),
+    ("a date that does not exist", date, "2026-02-31", "2026-02-31"),
+    ("a time", time, "14:30", time(14, 30)),
+    ("a whole float written as an int", float, 3, 3.0),
+    ("an int stays an int", int, 3, 3),
+    ("a str that looks like a date", str, "2026-08-10", "2026-08-10"),
+    ("a bool is not a number", bool, True, True),
+]
+
+
+@pytest.mark.parametrize("label, annotation, wire, expected", _DECODE_CONTRACT,
+                         ids=[c[0] for c in _DECODE_CONTRACT])
+def test_core_decode_contract(label, annotation, wire, expected):
+    """The other half of the tripwire: what the store assumes `decode` answers.
+
+    Reading a row back is `schema.decode`, which is published API rather than
+    the router's private one — but the store still leans on the exact readings
+    below, and a file written under one of them is on disk forever. These were
+    compared against the store's own decoder before it was deleted in 1.0.0, and
+    agreed in every case; they are pinned here so the agreement stays a fact.
+    """
+    schema = struct_of(make_dataclass("DecodeContractRow", [("v", annotation)]))
+    got = schema.decode({"v": wire})["v"]
+
+    assert got == expected and type(got) is type(expected)
+
+
+def test_core_decode_contract_on_enums():
+    """Enum readings the store depends on, mixins and aliases included.
+
+    A member travels by name. `__members__` resolves an alias to its canonical
+    member, and a `StrEnum` must not be reached through `str.__getitem__` — the
+    risk the store's own decoder carried a comment about, and which the core
+    turns out not to have either.
+    """
+    class Plain(Enum):
+        ADMIN = "a"
+        SUPER = "a"        # alias of ADMIN
+
+    class Sty(StrEnum):
+        ONE = "one"
+
+    class Cross(Enum):
+        RED = "BLUE"       # name and value cross over
+        BLUE = "RED"
+
+    def read(cls, wire):
+        schema = struct_of(make_dataclass("EnumContractRow", [("v", cls)]))
+        return schema.decode({"v": wire})["v"]
+
+    assert read(Plain, "ADMIN") is Plain.ADMIN
+    assert read(Plain, "SUPER") is Plain.ADMIN      # the alias, resolved
+    assert read(Plain, "a") == "a"                  # a value is not a name
+    assert read(Plain, "NOPE") == "NOPE"            # unknown, travels intact
+    assert read(Sty, "ONE") is Sty.ONE              # the mixin does not get in
+    assert read(Sty, "one") == "one"                # ...and its value is not a name
+    assert read(Cross, "RED") is Cross.RED          # by name, never by value
+    assert read(Cross, "BLUE") is Cross.BLUE
+
+
+@pytest.mark.parametrize("wire", [
+    {"$type": "date", "$value": "2026-02-31"},          # payload missed its option
+    {"$type": "date", "$value": "2026-08-10", "x": 1},  # a key beside the two
+    {"$type": "date", "$value": {"$type": "date", "$value": "x"}},  # nested
+], ids=["a payload that did not parse", "a key beside the wrapper", "a nested wrapper"])
+def test_a_malformed_wrapper_is_left_whole_for_the_core(wire):
+    """A wrapper the core will not consume stays on the row exactly as found.
+
+    Reading it half-way would erase it from the next dump without a word, which
+    is the one thing a file a person edits must never do.
+    """
+    schema = struct_of(make_dataclass("WrapperRow", [("v", Union[str, date])]))
+
+    assert schema.decode({"v": wire})["v"] == wire
+
+
+def test_codec_router_contract():
+    """The core's router is private API, and this is the tripwire for that.
+
+    `codec` imports `pytypehint.validation.value_branch` and the dependency is
+    pinned to an exact version because of it. These are the answers the codec
+    relies on: if a future core changes any of them, this fails before a store
+    writes a `$type` naming a branch that does not hold the value.
+    """
+    from pytypehint.validation import value_branch
+
+    # Two list options separated by a limit rather than by item type: the router
+    # reads the limit, which is the whole reason the codec stopped routing.
+    limited = struct_of(Narrow).fields[0].shape
+    assert value_branch(limited, ["ab"]).option_id() == "list[str | int]"
+    assert value_branch(limited, ["a"]).option_id() == "list[str]"
+
+    # The empty list satisfies whichever option does not demand items.
+    Row = make_dataclass("RouterContractRow",
+                         [("f", Union[Annotated[list[str], Min(1)], list[int]])])
+    empty = struct_of(Row).fields[0].shape
+    assert value_branch(empty, []).option_id() == "list[int]"
+
+    # A scalar slot answers by exact runtime type, and bool is not int.
+    Mixed = make_dataclass("RouterScalarRow", [("f", Union[int, str, bool])])
+    scalars = struct_of(Mixed).fields[0].shape
+    assert value_branch(scalars, 1).option_id() == "int"
+    assert value_branch(scalars, True).option_id() == "bool"
+    assert value_branch(scalars, "a").option_id() == "str"
+
+    # No option accepts it: None is the answer, and the codec reads that as
+    # "travel intact and let the core say so".
+    assert value_branch(limited, [object()]) is None
+    assert value_branch(scalars, 1.5) is None
 
 
 # ------------------------------------------------------------ notation atoms

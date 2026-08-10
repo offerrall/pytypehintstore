@@ -1,5 +1,90 @@
 # Changelog
 
+## [1.0.0] - 2026-08-10
+
+The store keeps what is genuinely its own — the disk, the lock, the identity of
+a schema, the life of a process — and stops having opinions about the contract.
+Every reading of a row was a second dialect maintained beside the core's, and a
+dialect that agrees today is a dialect that diverges later. `pytypehint` 1.0.0
+publishes the operations that make the second one unnecessary, so this release
+deletes it.
+
+- The dependency is `pytypehint==1.0.0`, pinned exact rather than floored. The
+  codec imports `pytypehint.validation.value_branch`, which is the core's own
+  router and carries no public promise; one author owns both packages, and a
+  pin plus `test_codec_router_contract` is what turns a move upstream into a
+  failing test rather than a file naming the wrong option.
+- `codec.decode` is gone, and with it `_decode_options`, `_decode_dict`,
+  `_decode_list`, `_decode_str`, `_convert`, `_core_type` and `_field`. A row is
+  read back with `schema.decode`, which the core published for exactly this and
+  does better: the spellings it accepts for a date and a time are fixed and
+  disjoint rather than delegated to `fromisoformat`, a malformed wrapper is left
+  whole instead of half-read, and a non-string key is refused before anything
+  probes it. Before the deletion the two were compared over the vocabulary, the
+  wrappers, the malformed wrappers and every enum shape including a `StrEnum`
+  mixin and an alias; they agreed in every case.
+- Writing still belongs here — the core describes and validates, and turning a
+  live instance into the tree that goes on disk is the file's business — but the
+  router underneath it does not. `codec._branch_of` and `codec._accepts` are
+  replaced by `value_branch`, so the option the file names is the option
+  validation would have chosen, by construction rather than by coincidence.
+- `store._ambiguous` and `store._shared_name` are gone. They existed because the
+  old core compiled a union whose options share a transport name — an enum class
+  called `date` beside a `date` — and the store refused it at the door to keep a
+  row from coming back as the wrong thing. The core now applies the identity
+  rule at compilation, inside lists included, so the schema never exists. The
+  refusal a caller sees is the core's own, with the core's coordinates, and the
+  store adds nothing to it.
+
+Three limits declared in the README are gone with them:
+
+- **A union of lists differing only in a constraint.**
+  `Annotated[list[str], Min(1)] | list[int]` with `[]` used to be written under
+  the branch that rejects it, so `add` refused a row the core had just called
+  valid. The core's router reads the constraints, because it calls `_check`.
+- **A union whose options share a transport name.** Refused by the core at
+  compilation now, rather than by the store at open.
+- **A date in another ISO spelling.** `"20260101"` and `"2026-W01-1"` used to
+  load, because `date.fromisoformat` accepts the whole of ISO 8601, and the next
+  dump rewrote them in the one form the store emits — turning a week date into
+  the Monday it names, in another year, without a word. The core pinned the
+  canonical spellings, so these are refused out loud instead.
+
+Breaking, and the reason it is declared rather than absorbed:
+
+- **Fingerprints move, so every store gets a new file.** The core renamed the
+  `Str` field `is_path_file` to `file_hint`, and a field *name* is part of the
+  text a schema is rendered as. This moves the fingerprint of every schema
+  holding a `str` at any depth — a field, a list item, a union option, a nested
+  dataclass — which in practice is nearly every schema. A schema with no `str`
+  anywhere keeps its fingerprint and its file.
+
+  What moved is the *rendering* of the contract, not the contract: the same
+  dataclass describes the same rows, and the old file is valid against the new
+  schema in every byte. So this is the one case where the usual answer — a
+  changed contract is a separate database, never a migration — is answering a
+  question nobody asked. **Rename the file** from
+  `Class.<old>.json` to `Class.<new>.json` and it loads: ids, `next_id` and
+  every row survive, because the transport form is unchanged from 0.0.4 (verified
+  field by field across the vocabulary and all three wrappers). Get the new name
+  by opening a store on an empty directory and reading `store.path`.
+
+  Two things to know before renaming. A file holding a date or time in a
+  non-canonical ISO spelling now fails the load rather than being read and
+  rewritten — loudly, naming the row. And a row whose `FileHint` file has since
+  moved or grown now loads where it used to be refused. If you would rather
+  revalidate than rename, re-import through `add()` from the old JSON; the old
+  file is never read and never deleted either way.
+- **`FileHint` replaces `IsPathFile`, and the core stopped checking the file.**
+  A row whose file was moved, deleted or grown past its maximum no longer stops
+  a load: the extension is validated because the text settles it, and existence
+  and size are questions for whoever opens the file. The one declared exception
+  to "a row that went in comes back out" is therefore gone.
+
+What 1.0.0 means here: the documented surface is the real one, and the store
+interprets the contract in zero places. What it adds is a file, a lock, an
+identity and a lifecycle — and it adds nothing else.
+
 ## [0.0.4]
 
 One library on both platforms: the lock now holds the same contract on POSIX

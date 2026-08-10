@@ -6,8 +6,10 @@ through the codec — and the exact words of every refusal to read it back.
 
 Four areas: the round trip through `close()` and a reopen; the load errors, one
 per test and quoted whole; the atomic dump and the rotated copies it leaves; and
-`IsPathFile`, the declared exception to "a row that went in comes back out" —
-the store keeps the path, the filesystem keeps the file.
+the path a row carries, which used to be the one declared exception to "a row
+that went in comes back out" and is no longer: the core validates the extension
+of the text and never looks at the file, so the row comes back whatever the
+filesystem has done since.
 
 What is not here: the dict in memory (test_store), the transport of each type
 (test_codec), the writer thread and shutdown (test_writer), the lockfile
@@ -26,9 +28,8 @@ from typing import Annotated, Literal
 
 import pytest
 
-from pytypehint import Choices, IsPathFile, Max, Min, MultipleOf, Pattern, struct_of
+from pytypehint import Choices, FileHint, Max, Min, MultipleOf, Pattern, struct_of
 from pytypehintstore import StoreLoadError
-from pytypehintstore.codec import decode
 from pytypehintstore.lockfile import alive
 from shared import Task
 
@@ -72,7 +73,7 @@ class Entry:
 
 @dataclass
 class Attachment:
-    path: Annotated[str, IsPathFile(extensions=(".txt",), max_size=8)]
+    path: Annotated[str, FileHint(extensions=(".txt",), max_size=8)]
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -106,7 +107,7 @@ def core_message(cls, row) -> str:
     schema = struct_of(cls)
 
     with pytest.raises((TypeError, ValueError)) as failure:
-        schema.build(decode(schema, row))
+        schema.build(schema.decode(row))
 
     return str(failure.value)
 
@@ -573,29 +574,46 @@ def test_a_file_path_is_stored_as_written_and_never_resolved(
     assert rows_of(store.path) == {"1": {"path": "note.txt"}}
 
 
-@pytest.mark.parametrize("damage", ["gone", "grown", "wrong type"])
-def test_a_row_whose_file_changed_under_it_fails_the_load(
-        open_store, store_dir, tmp_path, by_hand, damage, attachment_file):
-    """The declared exception to "a row that went in comes back out": the store
-    keeps the path, the filesystem keeps the file, and the core checks the file
-    every time it builds the row."""
-    name = "readme.md" if damage == "wrong type" else "note.txt"
-    note = tmp_path / name
-    note.write_text("12345678", encoding="utf-8")
-    by_hand(Attachment, store_dir, [{"path": str(note)}])
+@pytest.mark.parametrize("damage", ["gone", "grown", "never existed"])
+def test_a_row_survives_whatever_the_filesystem_did_to_its_file(
+        open_store, store_dir, tmp_path, by_hand, damage):
+    """The exception that used to live here is gone with the core's `stat()`.
+
+    A size and an existence are facts about one machine at one instant, and the
+    core stopped asking for them in 1.0.0. A path is text that names a file, the
+    extension is the part of it the text settles, and the row comes back exactly
+    as it was stored no matter what happened to the file in between."""
+    note = tmp_path / "note.txt"
+
+    if damage == "never existed":
+        stored = str(tmp_path / "was-never-here.txt")
+    else:
+        note.write_text("12345678", encoding="utf-8")
+        stored = str(note)
+
+    by_hand(Attachment, store_dir, [{"path": stored}])
 
     if damage == "gone":
         note.unlink()
     elif damage == "grown":
         note.write_text("123456789012", encoding="utf-8")
 
+    store = open_store(Attachment, store_dir)
+    assert store.all() == [(1, Attachment(path=stored))]
+
+
+def test_a_path_whose_extension_is_wrong_still_fails_the_load(
+        open_store, store_dir, tmp_path, by_hand, attachment_file):
+    """What survives of the file contract is the half the text answers.
+
+    No file is written anywhere in this test: the extension is spelled in the
+    value, so the refusal needs nothing but the row."""
+    by_hand(Attachment, store_dir, [{"path": str(tmp_path / "readme.md")}])
+
     message = load_failure(open_store, Attachment, store_dir)
-    wording = {"gone": "file does not exist",
-               "grown": "file too large: 12 bytes, maximum 8",
-               "wrong type": "not an accepted file type"}[damage]
 
     assert message.startswith(f"{attachment_file}: row 1: path: ")
-    assert wording in message
+    assert "not an accepted file type" in message
 
 
 # ---- the file is the shadow, never the source of truth ----------------------

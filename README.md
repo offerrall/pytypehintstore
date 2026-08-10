@@ -18,14 +18,13 @@ opens, every row in it is valid against this exact schema.**
 
 ## Install
 
-Not on PyPI yet. From a clone of the repository:
-
 ```bash
-pip install -e .
+pip install pytypehintstore
 ```
 
 That brings [`pytypehint`](https://github.com/offerrall/pytypehint) with it, the
-only dependency. Stdlib otherwise. Python 3.11+, `py.typed` included.
+only dependency, pinned to the exact version this release was built against.
+Stdlib otherwise. Python 3.11+, `py.typed` included.
 
 ## Quick start
 
@@ -111,9 +110,10 @@ tasks.add(Task(title="\ud800"))
 
 **The property, stated plainly:** if the core compiles your schema, the store
 persists it without loss or fails loudly — at `add`, or at `store_of` before a
-lockfile is taken. A stress campaign of 1150 generated schemas and four
-adversarial fronts found one exception, and it is loud rather than silent: a
-[union of lists differing only in a constraint](#known-limits).
+lockfile is taken. No exception, and no asterisk. The stress campaign of 1150
+generated schemas and four adversarial fronts found one, a union of lists
+differing only in a constraint, and 1.0.0 closed it by handing the question to
+the core's own router rather than answering it here.
 
 ## The identity
 
@@ -196,6 +196,14 @@ inside the object instead: `{"$type": "Square", "side": 2}`.
 
 Anything the codec cannot read as one single thing travels intact, so the error
 you see is the core's, with its path and its words.
+
+Which option gets named is not the store's opinion. Writing asks
+`pytypehint.validation.value_branch` — the core's own router, the one validation
+itself uses — so the branch the file names and the branch the schema would pick
+are the same answer to the same question. Reading back is the core's outright:
+`schema.decode`, published in 1.0.0. That router is internal to the core and
+carries no public promise, which is why the dependency is pinned to an exact
+version rather than a floor.
 
 ## Writing
 
@@ -290,11 +298,20 @@ travel out of `add` and `put` exactly as the core raised them.
   running store changes nothing, and the next dump overwrites your edit.
 - **`IsPassword` encrypts nothing.** The value is written in the clear, like any
   other string.
-- **`IsPathFile` stores the path, not the file.** The core revalidates it on
-  every load, so a row whose file was moved, deleted or grown past its maximum
-  stops the load.
+- **`FileHint` stores the path, not the file.** The core validates the
+  extension, which the text of the value settles by itself, and asks the
+  filesystem nothing — so a row whose file was moved, deleted or grown comes
+  back exactly as it was stored. Whether the file is still there is a question
+  for whoever opens it.
 - **`int | float` is ambiguous in a hand-edited file.** A bare `3` loads as an
   `int`; write `3.0` if you meant a float.
+- **A date is `YYYY-MM-DD` and a time is `HH:MM[:SS]`, and no other spelling
+  loads.** `date.fromisoformat` accepts far more than that, so `"20260101"` and
+  `"2026-W01-1"` used to load and then be rewritten in the canonical form on the
+  next dump — a week date quietly becoming the Monday it names, in another year.
+  The core pinned the spellings in 1.0.0, so a file holding one of the others is
+  now refused at load with the core's own message rather than read and rewritten
+  behind your back. Write the canonical form.
 - **A wrong Python type whose text is valid transport is rewritten, not
   refused.** With `due: date`, `Task(due="2026-08-01")` is accepted and the row
   ends up holding `date(2026, 8, 1)`.
@@ -307,27 +324,17 @@ travel out of `add` and `put` exactly as the core raised them.
 - **Upgrading `pytypehint` or Python can move the fingerprints.** The pinned test
   in `tests/test_identity.py` catches it. It is declared as a breaking change,
   never absorbed — an absorbed one would silently rename every database.
-- **A union whose options share a transport name is refused at open.** A wrapped
-  option is named by its bare class name, so an enum class called `date`
-  competes with `date` itself for one `$type` and the file could not say which
-  option a row belongs to. The core compiles such a union; the store refuses it,
-  naming the field and the shared name. The check is for real collisions, not
-  for forbidden names: the same enum in a field with no `date` beside it stores
-  its members like any other.
-- **A union of lists that differ only in a constraint can name the wrong
-  branch.** `Annotated[list[str], Min(1)] | list[int]` with `[]`: the core routes
-  by the whole shape, the codec by the item types alone, so `add` refuses a row
-  the core had just called valid. Loud, never silent, and rare — 4 of 500
-  generated schemas. Fixing it needs the core's own value router, which is not
-  public.
 - **A row the file cannot carry is refused at `add`.** A lone surrogate is a
   `str` Python allows and no encoder can write.
 - **Duplicate row ids in a hand-edited file: the last one wins.** `json.loads`
   drops the earlier ones before the store sees there were two, and there is no
   defence short of parsing the file ourselves.
-- **About 160 levels of nesting.** Deeper than that, opening the store raises
-  `RecursionError` — loudly, and before the lockfile is taken, so nothing is
-  left behind. The core itself compiles up to about 192.
+- **Around 120 levels of nesting on 3.11, around 245 on 3.12 and later.** Deeper
+  than that, opening the store raises `RecursionError` — loudly, and before the
+  lockfile is taken, so nothing is left behind. The gap between the two is the
+  interpreter's, not the store's: before 3.12 every comprehension on the way
+  down takes a stack frame of its own. The core itself compiles to about 247 on
+  either.
 - **Rows are rebuilt one by one on load.** 5 000 rows of an eight-field
   dataclass take about half a second to reopen and 1.7 MB on disk; adding them
   costs about 0.12 ms each.

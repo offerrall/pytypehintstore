@@ -48,7 +48,13 @@ class Reference:
 # schema is rendered changed — and a rendering that moves renames every database
 # in the world on the next release. That is a breaking change to declare, never
 # an accident to absorb.
-REFERENCE_HASH = '9d63f00a'
+#
+# It moved once, in 1.0.0, and was declared: the core renamed the `Str` field
+# `is_path_file` to `file_hint`, and a field NAME is part of the text a schema
+# is rendered as. So every schema holding a `str` anywhere — not only the ones
+# marking a file — has a new fingerprint and therefore a new file. The old file
+# is not read and not deleted; see the CHANGELOG for what to do with it.
+REFERENCE_HASH = 'a0dd8192'
 
 
 def a_reference(**edits):

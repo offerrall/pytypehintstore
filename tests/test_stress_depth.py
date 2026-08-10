@@ -45,7 +45,7 @@ from pytypehint import (Choices, Description, Extra, IsPassword, Label, Max,
                         Step, struct_of)
 
 from pytypehintstore import store_of
-from pytypehintstore.codec import decode, encode
+from pytypehintstore.codec import encode
 from pytypehintstore.fingerprint import fingerprint
 
 # Long enough that a thread still inside it is hung rather than slow.
@@ -182,7 +182,7 @@ def test_chain_of_twenty_levels_round_trips_through_the_codec():
 
     started = time.perf_counter()
     wire = encode(schema, obj)
-    back = schema.build(decode(schema, wire))
+    back = schema.build(schema.decode(wire))
     elapsed = time.perf_counter() - started
 
     assert back == obj
@@ -271,7 +271,7 @@ def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
     top, ladder = chain(store, "Deepest")
     schema = struct_of(top)
     obj = nested(ladder)
-    assert schema.build(decode(schema, encode(schema, obj))) == obj
+    assert schema.build(schema.decode(encode(schema, obj))) == obj
 
     with pytest.raises(RecursionError):
         fingerprint(struct_of(chain(core + 1, "Past")[0]))
@@ -323,7 +323,7 @@ def test_recursive_node_with_fifty_levels_of_data(store_dir, open_store):
     tree = spine(50)
     schema = struct_of(Node)
 
-    assert schema.build(decode(schema, encode(schema, tree))) == tree
+    assert schema.build(schema.decode(encode(schema, tree))) == tree
 
     store = open_store(Node, store_dir, debounce=0.02)
     row_id = store.add(tree)
@@ -414,7 +414,7 @@ def test_sixty_fields_round_trip_and_persist(store_dir, open_store, rows_of,
     assert len(schema.fields) == 60
 
     row = Wide()
-    assert schema.build(decode(schema, encode(schema, row))) == row
+    assert schema.build(schema.decode(encode(schema, row))) == row
 
     store = open_store(Wide, store_dir, debounce=0.02)
     row_id = store.add(row)

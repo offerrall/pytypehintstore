@@ -52,7 +52,6 @@ import json
 import math
 import random
 import re
-import tempfile
 import unicodedata
 from dataclasses import field as dc_field, make_dataclass
 from datetime import date, time
@@ -68,8 +67,8 @@ from pytypehint import (
     SchemaValueError, Struct, Time, struct_of,
 )
 from pytypehint.validation import check_options_value, value_branch
-from pytypehintstore import StoreError, store_of
-from pytypehintstore.codec import decode, encode
+from pytypehintstore import store_of
+from pytypehintstore.codec import encode
 from pytypehintstore.fingerprint import fingerprint
 
 # How much of the campaign runs here. The whole file stays inside a minute on a
@@ -86,17 +85,13 @@ MODES = ("lo", "hi", "mid")
 # rate is asserted at the end.
 _REJECTED: list[tuple[int, str]] = []
 
-# The seeds that hit the defect reduced below as
-# `test_a_union_of_lists_routes_by_type_alone_*`: the codec names the wrong list
-# branch in `$type`, and the core then refuses a row it had just called valid.
-# They are xfail(strict) rather than deleted, so the day the codec routes on
-# constraints these turn into XPASS and say so.
-_LIST_ROUTING_DEFECT = (
-    "the codec routes a union of lists by item runtime type alone — see "
-    "test_a_union_of_lists_routes_by_type_alone_on_length for the reduced case")
-_BAD_P4_SEEDS = {14, 48, 230, 374}
-_BAD_STORE_SEEDS = {14, 48}
-_BAD_ROUTING_SEEDS = {14, 48, 230, 374}
+# The seeds that used to hit the list-routing defect, kept as empty sets rather
+# than removed: the machinery that marks a seed broken is what a future finding
+# would reach for, and an empty set says the campaign currently has none.
+_LIST_ROUTING_DEFECT = "no seed is expected to fail"
+_BAD_P4_SEEDS: set[int] = set()
+_BAD_STORE_SEEDS: set[int] = set()
+_BAD_ROUTING_SEEDS: set[int] = set()
 
 
 def _seed_params(seeds, broken):
@@ -739,7 +734,7 @@ def test_codec_round_trip(seed):
     for mode, obj in zip(MODES, instances):
         wire = json.loads(json.dumps(encode(schema, obj), ensure_ascii=False))
         check_transport((schema,), wire)
-        back = schema.build(decode(schema, wire))
+        back = schema.build(schema.decode(wire))
 
         assert type(back) is cls, f"seed {seed} [{mode}]: came back a {type(back).__name__}"
         assert back == obj, f"seed {seed} [{mode}]: round trip changed the row"
@@ -1011,57 +1006,46 @@ def test_the_core_refuses_few_of_the_generated_schemas():
 StrNamedEnum = Enum("str", [("A", "a"), ("B", "b")])  # type: ignore[misc]
 
 
-def test_an_enum_named_like_a_scalar_is_why_the_store_checks_the_names():
-    """Two halves of one finding: what the codec does, and why it never runs.
+def test_an_enum_named_like_a_scalar_never_reaches_a_schema():
+    """The finding the store's own guard used to cover, now the core's to refuse.
 
     `option_id()` is the bare class name, so an enum called `str` answers to the
-    same wrapper name as the `Str` beside it and the codec hands the member back
-    as a plain string. That is the defect the store's guard exists for — and the
-    guard is what keeps it out of reach, so both halves are pinned here: remove
-    the guard and this test says exactly what comes back instead.
+    same wrapper name as the `Str` beside it, and a member written under that
+    name came back as a plain string. The store used to check for the pair when
+    a store was opened, which left `struct_of` accepting a schema nobody could
+    round trip. In 1.0.0 the identity rule belongs to the core and runs at
+    compilation, so the schema never exists and the store has nothing to guard.
     """
-    Row = make_dataclass("RowWithStrNamedEnum", [("f", Union[str, StrNamedEnum])])
-    schema = struct_of(Row)
-
-    obj = Row(StrNamedEnum.A)
-    wire = json.loads(json.dumps(encode(schema, obj)))
-    back = schema.build(decode(schema, wire))
-
-    assert wire == {"f": {"$type": "str", "$value": "A"}}
-    assert back.f == "A" and type(back.f) is str, "the codec kept the member"
-
-    with pytest.raises(StoreError, match="share the transport name 'str'"):
-        store_of(Row, tempfile.mkdtemp())
+    with pytest.raises(ValueError, match=r"duplicate discriminator name\(s\): str"):
+        struct_of(make_dataclass("RowWithStrNamedEnum",
+                                 [("f", Union[str, StrNamedEnum])]))
 
 
 def test_a_schema_the_codec_could_not_name_never_becomes_a_store(tmp_path):
-    """The row that used to be accepted, written, and read back as a str."""
+    """The row that used to be accepted, written, and read back as a str.
+
+    `store_of` compiles before it touches the directory, so the core's refusal
+    arrives first and in the core's own words — the store adds nothing to it —
+    and nothing is left on disk either way."""
     Row = make_dataclass("StoredRowWithStrNamedEnum",
                          [("f", Union[str, StrNamedEnum])])
 
-    with pytest.raises(StoreError, match="share the transport name 'str'"):
+    with pytest.raises(ValueError, match=r"duplicate discriminator name\(s\): str"):
         store_of(Row, tmp_path)
 
     assert list(tmp_path.iterdir()) == [], "a refused schema left something behind"
 
 
-_LIST_ROUTING = (
-    "FINDING: codec._branch_of picks between two `list` options with "
-    "codec._accepts, which reads only the RUNTIME TYPE of each item and never "
-    "the constraints — not the list's own Min/Max length, not Min/Max/Choices/"
-    "Pattern/MultipleOf on the items. The core's own router "
-    "(pytypehint.validation.value_branch) calls shape._check and gets it right. "
-    "So the codec writes a `$type` naming a branch that rejects the value, and "
-    "build() refuses a row the core had just certified as valid: "
-    "check_options_value accepts the value, store.add(obj) raises. Loud, never "
-    "silent — a "
-    "constraint cannot change the Python type an item decodes to, so the "
-    "mis-named branch either refuses the row or yields the same value — but a "
-    "valid object that cannot be stored is still a valid object that cannot be "
-    "stored. Hit by 4 of the 500 generated schemas. Declared in the README under Known limits: \"a union of lists that differ only in a constraint\".")
+# The defect these three reduced cases were written for: the codec used to pick
+# between two `list` options with a router of its own that read the runtime type
+# of each item and never the constraints, so it named a `$type` the value did not
+# satisfy and `build()` refused a row the core had just certified. In 1.0.0 the
+# codec asks `pytypehint.validation.value_branch` — the core's own router, the
+# one `check_options_value` agrees with by construction — and the disagreement
+# has nowhere left to come from. They are kept as plain tests: the property they
+# pin is the one the fix delivers.
 
 
-@pytest.mark.xfail(strict=True, reason=_LIST_ROUTING)
 def test_a_union_of_lists_routes_by_type_alone_on_length():
     """`[]` is only valid on the branch without `Min(1)`, and goes to the other."""
     Row = make_dataclass("EmptyListRoutingRow",
@@ -1074,10 +1058,9 @@ def test_a_union_of_lists_routes_by_type_alone_on_length():
     wire = json.loads(json.dumps(encode(schema, obj)))
     assert wire == {"f": {"$type": "list[int]", "$value": []}}, wire
 
-    assert schema.build(decode(schema, wire)) == obj
+    assert schema.build(schema.decode(wire)) == obj
 
 
-@pytest.mark.xfail(strict=True, reason=_LIST_ROUTING)
 def test_a_union_of_lists_routes_by_type_alone_on_a_pattern():
     """`["ZZ"]` matches no `[a-z]+`, so it belongs to the other branch."""
     Row = make_dataclass("PatternRoutingRow", [
@@ -1088,10 +1071,9 @@ def test_a_union_of_lists_routes_by_type_alone_on_a_pattern():
     obj = Row(["ZZ"])
     check_options_value(schema.fields[0].shape, obj.f)
 
-    assert schema.build(decode(schema, json.loads(json.dumps(encode(schema, obj))))) == obj
+    assert schema.build(schema.decode(json.loads(json.dumps(encode(schema, obj))))) == obj
 
 
-@pytest.mark.xfail(strict=True, reason=_LIST_ROUTING)
 def test_a_union_of_lists_routes_by_type_alone_on_choices():
     """Same defect with `Choices`, and through a real store."""
     Row = make_dataclass("ChoicesRoutingRow", [
@@ -1102,7 +1084,7 @@ def test_a_union_of_lists_routes_by_type_alone_on_choices():
     obj = Row([7])
     check_options_value(schema.fields[0].shape, obj.f)
 
-    assert schema.build(decode(schema, json.loads(json.dumps(encode(schema, obj))))) == obj
+    assert schema.build(schema.decode(json.loads(json.dumps(encode(schema, obj))))) == obj
 
 
 # Every list branch the catalogue below knows, grouped by the identity the core
@@ -1169,12 +1151,12 @@ def test_a_misrouted_list_is_loud_and_never_silent():
 
                             if named == wanted:
                                 agreed += 1
-                                assert schema.build(decode(schema, wire)) == obj
+                                assert schema.build(schema.decode(wire)) == obj
                                 continue
 
                             misrouted += 1
                             try:
-                                back = schema.build(decode(schema, wire))
+                                back = schema.build(schema.decode(wire))
                             except (TypeError, ValueError):
                                 continue  # loud, which is the whole point
 
@@ -1183,27 +1165,30 @@ def test_a_misrouted_list_is_loud_and_never_silent():
                                 examples.append((hints, value, back.f))
 
     assert agreed > 100, agreed
-    assert misrouted > 0, "the defect is gone — drop the xfails above"
+    assert misrouted == 0, (
+        f"the codec named a branch the core would not have: {examples[:3]}")
     assert silent == 0, f"the transport rewrote a row in silence: {examples[:3]}"
 
 
-def test_the_core_and_the_codec_disagree_about_which_list_branch_it_is():
-    """The defect above, stated as the disagreement it is.
+def test_the_core_and_the_codec_agree_about_which_list_branch_it_is():
+    """The disagreement that used to be here, stated as the agreement it became.
 
-    This one passes: it asserts what the two routers currently answer, so the
-    xfails above have a companion that keeps saying WHY they fail even after
-    somebody reads them as flaky.
+    There is one router now. The codec asks the core's, so the branch the file
+    names and the branch validation would pick are the same answer to the same
+    question rather than two answers that happened to coincide.
     """
-    Row = make_dataclass("RoutingDisagreementRow",
+    Row = make_dataclass("RoutingAgreementRow",
                          [("f", Union[Annotated[list[str], Min(1)], list[int]])])
-    shapes = struct_of(Row).fields[0].shape
+    schema = struct_of(Row)
+    shapes = schema.fields[0].shape
 
-    # The core reads the constraints and lands on the branch that accepts [].
+    # `[]` satisfies only the branch without `Min(1)`, and both now say so.
     assert value_branch(shapes, []).option_id() == "list[int]"
+    assert encode(schema, Row([]))["f"]["$type"] == "list[int]"
 
-    # The codec reads item types only and lands on the branch that does not.
-    encoded = encode(struct_of(Row), Row([]))
-    assert encoded["f"]["$type"] == "list[str]"
+    # And the row survives the trip it used to be refused on.
+    obj = Row([])
+    assert schema.build(schema.decode(json.loads(json.dumps(encode(schema, obj))))) == obj
 
 
 DateNamedEnum = Enum("date", [("EARLY", 1), ("LATE", 2)])  # type: ignore[misc]
@@ -1214,7 +1199,7 @@ def test_an_enum_named_like_date_is_refused_the_same_way(tmp_path):
     shape both report `option_id() == 'date'`."""
     Row = make_dataclass("RowWithDateNamedEnum", [("f", Union[date, DateNamedEnum])])
 
-    with pytest.raises(StoreError, match="share the transport name 'date'"):
+    with pytest.raises(ValueError, match=r"duplicate discriminator name\(s\): date"):
         store_of(Row, tmp_path)
 
 
@@ -1239,7 +1224,7 @@ def test_a_dataclass_with_no_fields_compiles_and_round_trips(tmp_path):
 
     wire = json.loads(json.dumps(encode(schema, obj)))
     assert wire == {"inner": {}}
-    assert schema.build(decode(schema, wire)) == obj
+    assert schema.build(schema.decode(wire)) == obj
 
     store = store_of(Holder, tmp_path, debounce=0.0)
     try:
@@ -1261,7 +1246,7 @@ def test_notation_does_not_reach_the_transport():
     noted = struct_of(Noted)
 
     assert encode(plain, Plain(3, "x")) == encode(noted, Noted(3, "x"))
-    assert decode(plain, {"n": 3, "s": "x"}) == decode(noted, {"n": 3, "s": "x"})
+    assert plain.decode({"n": 3, "s": "x"}) == noted.decode({"n": 3, "s": "x"})
 
 
 def test_notation_moves_the_fingerprint():
@@ -1294,10 +1279,10 @@ def test_an_enum_alias_travels_as_its_canonical_name():
     wire = json.loads(json.dumps(encode(schema, obj)))
 
     assert wire == {"f": "FIRST"}
-    assert schema.build(decode(schema, wire)) == obj
+    assert schema.build(schema.decode(wire)) == obj
 
     # The alias name is still a reading the file may carry, and it resolves.
-    assert schema.build(decode(schema, {"f": "SECOND"})) == obj
+    assert schema.build(schema.decode({"f": "SECOND"})) == obj
 
 
 def test_every_member_of_a_generated_enum_round_trips():
@@ -1311,9 +1296,9 @@ def test_every_member_of_a_generated_enum_round_trips():
         for name, member in enum_cls.__members__.items():
             obj = Row(member)
             wire = json.loads(json.dumps(encode(schema, obj), ensure_ascii=False))
-            assert schema.build(decode(schema, wire)) == obj, f"seed {seed}, member {name!r}"
+            assert schema.build(schema.decode(wire)) == obj, f"seed {seed}, member {name!r}"
             # A file written by hand may name the alias; it must still resolve.
-            assert schema.build(decode(schema, {"f": name})) == obj
+            assert schema.build(schema.decode({"f": name})) == obj
 
 
 def test_the_edges_of_the_calendar_and_the_clock_survive():
@@ -1326,7 +1311,7 @@ def test_the_edges_of_the_calendar_and_the_clock_survive():
             obj = Row(day, moment)
             wire = json.loads(json.dumps(encode(schema, obj)))
             assert type(wire["d"]) is str and type(wire["t"]) is str
-            assert schema.build(decode(schema, wire)) == obj
+            assert schema.build(schema.decode(wire)) == obj
 
 
 def test_an_empty_list_picks_a_branch_and_stays_empty():
@@ -1338,7 +1323,7 @@ def test_an_empty_list_picks_a_branch_and_stays_empty():
     wire = json.loads(json.dumps(encode(schema, obj)))
 
     assert wire["f"]["$value"] == []
-    assert schema.build(decode(schema, wire)) == obj
+    assert schema.build(schema.decode(wire)) == obj
 
 
 def test_a_string_that_reads_as_a_date_stays_a_string():
@@ -1351,7 +1336,7 @@ def test_a_string_that_reads_as_a_date_stays_a_string():
 
     for obj in (as_text, as_date):
         wire = json.loads(json.dumps(encode(schema, obj)))
-        back = schema.build(decode(schema, wire))
+        back = schema.build(schema.decode(wire))
         assert back == obj and type(back.f) is type(obj.f)
 
 
@@ -1361,7 +1346,7 @@ def test_a_lone_surrogate_passes_the_codec():
     schema = struct_of(Row)
 
     obj = Row("\ud800")
-    assert schema.build(decode(schema, json.loads(json.dumps(encode(schema, obj))))) == obj
+    assert schema.build(schema.decode(json.loads(json.dumps(encode(schema, obj))))) == obj
 
 
 def test_a_lone_surrogate_is_refused_before_it_becomes_a_row(tmp_path):
@@ -1400,7 +1385,7 @@ def test_big_integers_and_extreme_floats_survive_the_file(tmp_path):
 
     for obj in cases:
         wire = json.loads(json.dumps(encode(schema, obj)))
-        assert schema.build(decode(schema, wire)) == obj
+        assert schema.build(schema.decode(wire)) == obj
 
     store = store_of(Row, tmp_path, debounce=0.0)
     try:
@@ -1422,7 +1407,7 @@ def test_a_unicode_field_name_is_a_json_key_like_any_other(tmp_path):
     obj = Row(1, "ok")
     wire = json.loads(json.dumps(encode(schema, obj), ensure_ascii=False))
     assert wire == {"日本語": 1, "ñé": "ok"}
-    assert schema.build(decode(schema, wire)) == obj
+    assert schema.build(schema.decode(wire)) == obj
 
     store = store_of(Row, tmp_path, debounce=0.0)
     try:
@@ -1446,7 +1431,7 @@ def test_a_pattern_is_matched_in_full_not_searched():
     schema = struct_of(Row)
 
     assert re.fullmatch(expression, "abc")
-    assert schema.build(decode(schema, {"f": "abc"})) == Row("abc")
+    assert schema.build(schema.decode({"f": "abc"})) == Row("abc")
 
     with pytest.raises((TypeError, ValueError)):
-        schema.build(decode(schema, {"f": "abc1"}))
+        schema.build(schema.decode({"f": "abc1"}))
