@@ -30,7 +30,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/offerrall/pytypehintstore"
 Repository = "https://github.com/offerrall/pytypehintstore"
-Changelog = "https://github.com/offerrall/pytypehintstore/blob/master/CHANGELOG.md"
+Changelog = "https://github.com/offerrall/pytypehintstore/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["mypy", "pytest"]

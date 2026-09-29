@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1] - 2026-09-29
+
+Documentation only; the code is the same as 1.0.0.
+
+- The README keeps the overview, install, quick start and ecosystem; the rest
+  moves to `docs/`, one page per topic.
+- The Changelog link in the package metadata points to the `main` branch, which
+  is where this file lives.
+
 ## [1.0.0] - 2026-08-10
 
 The store keeps what is genuinely its own — the disk, the lock, the identity of
