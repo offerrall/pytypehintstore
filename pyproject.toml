@@ -29,6 +29,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/offerrall/pytypehintstore"
+Documentation = "https://offerrall.github.io/pytypehintstore/"
 Repository = "https://github.com/offerrall/pytypehintstore"
 Changelog = "https://github.com/offerrall/pytypehintstore/blob/main/CHANGELOG.md"
 

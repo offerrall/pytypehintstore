@@ -39,7 +39,4 @@ tasks.add(Task(title="\ud800"))
 
 **The property, stated plainly:** if the core compiles your schema, the store
 persists it without loss or fails loudly — at `add`, or at `store_of` before a
-lockfile is taken. No exception, and no asterisk. The stress campaign of 1150
-generated schemas and four adversarial fronts found one, a union of lists
-differing only in a constraint, and 1.0.0 closed it by handing the question to
-the core's own router rather than answering it here.
+lockfile is taken. No exception, and no asterisk.

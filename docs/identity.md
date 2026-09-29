@@ -10,6 +10,6 @@ without special cases fits in one sentence and is tested in three lines.
 
 Change the class and you get a new, empty database. The old file stays where it
 was, untouched and readable, named for the schema that wrote it. Moving rows
-across is a script over readable JSON — a minute of work for you or an agent —
+across is a script over readable JSON — a minute of work —
 and it is deliberately outside this library, because a migration that runs
 automatically is a migration nobody read.

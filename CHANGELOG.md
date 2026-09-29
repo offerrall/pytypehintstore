@@ -1,6 +1,22 @@
 # Changelog
 
-## [1.0.1] - 2026-09-29
+## 1.0.2 - 2026-09-29
+
+### Changed
+
+- Documentation only: the README becomes a short entrance to the documentation
+  site at https://offerrall.github.io/pytypehintstore/, and `docs/overview.md`
+  holds the introduction and the full walk-through, linked to `example.py`.
+- The fingerprint shown in the overview and on the lock page is the real one,
+  `Task.ef8e8a47.json`; the file page shows the class its sample row belongs to.
+- "Known limits" becomes "Limits". The lock's POSIX and Windows behaviour moves
+  to the lock page, and release history moves out of the pages into this file.
+- The package metadata gains a `Documentation` URL.
+- Every heading in this changelog carries its release date.
+
+The code is the same as 1.0.1.
+
+## 1.0.1 - 2026-09-29
 
 Documentation only; the code is the same as 1.0.0.
 
@@ -9,7 +25,7 @@ Documentation only; the code is the same as 1.0.0.
 - The Changelog link in the package metadata points to the `main` branch, which
   is where this file lives.
 
-## [1.0.0] - 2026-08-10
+## 1.0.0 - 2026-08-10
 
 The store keeps what is genuinely its own — the disk, the lock, the identity of
 a schema, the life of a process — and stops having opinions about the contract.
@@ -94,7 +110,9 @@ What 1.0.0 means here: the documented surface is the real one, and the store
 interprets the contract in zero places. What it adds is a file, a lock, an
 identity and a lifecycle — and it adds nothing else.
 
-## [0.0.4]
+## 0.0.4 - 2026-07-30
+
+0.0.3 was tagged but not published to PyPI; its changes are part of this entry.
 
 One library on both platforms: the lock now holds the same contract on POSIX
 that it held on Windows, and the checker agrees on both.
@@ -124,7 +142,7 @@ that it held on Windows, and the checker agrees on both.
   out there — while Windows trusts the pid written in it and refuses. Two live
   stores behave identically on both.
 
-## [0.0.2]
+## 0.0.2 - 2026-07-30
 
 Out of a stress campaign: 1150 generated schemas, four adversarial fronts, and
 the suite from 200 tests to 1583.
@@ -152,7 +170,7 @@ the suite from 200 tests to 1583.
   `true` in `v` is no longer read as version 1.
 - Packaging: classifiers, keywords and project URLs for PyPI.
 
-## [0.0.1]
+## 0.0.1 - 2026-07-30
 
 First release. Rows of one `pytypehint`-validated dataclass, kept in memory and
 mirrored to a JSON file a person can open and edit.

@@ -1,6 +1,36 @@
 # The file
 
-The file carries the transport form, the same shapes an HTTP client would send:
+The file carries the transport form, the same shapes an HTTP client would send.
+For this class:
+
+```python
+from dataclasses import dataclass
+from datetime import date
+from enum import Enum
+from typing import Annotated
+
+from pytypehint import Max, Min
+
+
+class Priority(Enum):
+    LOW = "low"
+    HIGH = "high"
+
+
+@dataclass
+class Note:
+    body: Annotated[str, Min(1)]
+
+
+@dataclass
+class Task:
+    title: Annotated[str, Min(1), Max(80)]
+    due: date
+    priority: Priority = Priority.LOW
+    note: Note | None = None
+```
+
+a store holding one row writes:
 
 ```json
 {
@@ -64,10 +94,7 @@ inside the object instead: `{"$type": "Square", "side": 2}`.
 Anything the codec cannot read as one single thing travels intact, so the error
 you see is the core's, with its path and its words.
 
-Which option gets named is not the store's opinion. Writing asks
-`pytypehint.validation.value_branch` — the core's own router, the one validation
-itself uses — so the branch the file names and the branch the schema would pick
-are the same answer to the same question. Reading back is the core's outright:
-`schema.decode`, published in 1.0.0. That router is internal to the core and
-carries no public promise, which is why the dependency is pinned to an exact
-version rather than a floor.
+Which option gets named is not the store's opinion. Writing asks the core's own
+router, the one validation itself uses, so the branch the file names and the
+branch the schema would pick are the same answer to the same question. Reading
+back is the core's outright: `schema.decode`.
