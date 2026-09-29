@@ -29,11 +29,11 @@ The full documentation is at https://offerrall.github.io/pytypehintstore/.
 
 ## Documentation
 
-- [Overview](docs/overview.md): how the store works and a full walk-through of its operations.
-- [The guarantee](docs/guarantee.md): every row a store opens was rebuilt through your schema.
-- [The identity](docs/identity.md): the file name, and why any change to the class is a new database.
-- [The file](docs/file.md): the JSON on disk, editing it by hand, and every load error.
-- [Writing](docs/writing.md): debounced, atomic dumps, rotated copies and `close()`.
-- [The lock](docs/lock.md): one process per store, and how orphaned lockfiles are taken over.
-- [API](docs/api.md): `store_of`, its methods and its exceptions.
-- [Limits](docs/limits.md): what the store does not do, stated plainly.
+- [Overview](https://offerrall.github.io/pytypehintstore/): how the store works and a full walk-through of its operations.
+- [The guarantee](https://offerrall.github.io/pytypehintstore/guarantee/): every row a store opens was rebuilt through your schema.
+- [The identity](https://offerrall.github.io/pytypehintstore/identity/): the file name, and why any change to the class is a new database.
+- [The file](https://offerrall.github.io/pytypehintstore/file/): the JSON on disk, editing it by hand, and every load error.
+- [Writing](https://offerrall.github.io/pytypehintstore/writing/): debounced, atomic dumps, rotated copies and `close()`.
+- [The lock](https://offerrall.github.io/pytypehintstore/lock/): one process per store, and how orphaned lockfiles are taken over.
+- [API](https://offerrall.github.io/pytypehintstore/api/): `store_of`, its methods and its exceptions.
+- [Limits](https://offerrall.github.io/pytypehintstore/limits/): what the store does not do, stated plainly.
