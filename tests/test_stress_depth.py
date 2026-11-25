@@ -222,6 +222,12 @@ def test_chain_of_twenty_levels_survives_a_store(store_dir, open_store, file_of,
 # materialized: maximum recursion depth exceeded"). Both are the loud failure.
 DEEP = (RecursionError, TypeError)
 
+# A ceiling found by bisection is where the stack ran out for that call, from
+# that caller. Another caller, a dump or the next open meets the same row a few
+# frames deeper or shallower, so the checks stand MARGIN levels inside and
+# outside it: the guarantee is about depths, not about one exact frame.
+MARGIN = 8
+
 
 def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
     """Bisect the ladder until something gives, and check what gave.
@@ -271,16 +277,16 @@ def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
     note("recursion ceilings", core_struct_of=core, store_fingerprint=store,
          recursionlimit=sys.getrecursionlimit())
 
-    # The loud half of the guarantee. At the deepest depth the store can name,
-    # the whole trip is exact; one level past the core's ceiling, the failure is
-    # a RecursionError and nothing else.
-    top, ladder = chain(store, "Deepest")
+    # The loud half of the guarantee. Inside the depth the store can name, the
+    # whole trip is exact; past the core's ceiling, the failure is a recursion
+    # error and nothing else.
+    top, ladder = chain(max(1, store - MARGIN), "Deepest")
     schema = struct_of(top)
     obj = nested(ladder)
     assert schema.build(schema.decode(encode(schema, obj))) == obj
 
     with pytest.raises(DEEP, match="recursion"):
-        fingerprint(struct_of(chain(core + 1, "Past")[0]))
+        fingerprint(struct_of(chain(core + MARGIN, "Past")[0]))
 
 
 def test_a_schema_the_core_compiles_but_cannot_be_named_fails_at_open(store_dir):
@@ -300,7 +306,7 @@ def test_a_schema_the_core_compiles_but_cannot_be_named_fails_at_open(store_dir)
         try:
             fingerprint(struct_of(chain(depth, f"W{depth}")[0]))
             return True
-        except RecursionError:
+        except DEEP:
             return False
 
     low, high = 1, 400
@@ -313,10 +319,10 @@ def test_a_schema_the_core_compiles_but_cannot_be_named_fails_at_open(store_dir)
         else:
             high = middle - 1
 
-    top = chain(low + 1, "Window")[0]
+    top = chain(low + MARGIN, "Window")[0]
     # The core may be happy with it, or, since pytypehint 1.3.0, give in at the
     # same depth: the window can be empty. Either way the store fails loudly.
-    with pytest.raises(RecursionError):
+    with pytest.raises(DEEP):
         store_of(top, str(store_dir))
 
     assert list(store_dir.iterdir()) == []
@@ -381,7 +387,7 @@ def test_the_data_depth_that_breaks_is_loud_and_spends_no_id(store_dir,
         try:
             store.remove(store.add(spine(depth)))
             return True
-        except RecursionError:
+        except DEEP:
             return False
 
     low, high = 1, 400
@@ -398,12 +404,12 @@ def test_the_data_depth_that_breaks_is_loud_and_spends_no_id(store_dir,
     assert low < 400, "raise the ceiling: add never gave in"
 
     before = len(store)
-    with pytest.raises(RecursionError):
-        store.add(spine(low + 1))
+    with pytest.raises(DEEP):
+        store.add(spine(low + MARGIN))
 
     # Refused before an id was spent, and before a row was kept.
     assert len(store) == before
-    surviving = store.add(spine(low))
+    surviving = store.add(spine(max(1, low - MARGIN)))
     tree = store.get(surviving)
     store.close()
 

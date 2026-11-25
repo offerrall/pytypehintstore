@@ -13,6 +13,10 @@
   fingerprints are unchanged.
 - CI ran on pushes to `master`, a branch the repository does not have: it runs
   on `main` now.
+- The depth stress tests checked the exact frame where the stack ran out, which
+  moves with the caller and the platform. They now check `MARGIN` levels inside
+  and outside each ceiling, and take the recursion error pytypehint 1.3.0
+  reports as a `TypeError` as the loud failure it is.
 
 ## 1.1.0 - 2026-11-25
 
