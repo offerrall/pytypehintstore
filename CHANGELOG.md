@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 - 2026-11-25
+
+### Changed
+
+- Requires `pytypehint == 1.3.0` (was `1.0.0`), so a store opens beside
+  pytypehintweb 1.3 and later. The fingerprint of a schema is unchanged: the
+  31 stores of a real application keep their file names across the upgrade.
+- The depth stress test no longer requires a band of depths where the core
+  compiles a schema the store cannot name: from pytypehint 1.3.0 the core gives
+  in at the same depth. The store still fails loudly and leaves nothing behind.
+
 ## 1.0.3 - 2026-09-29
 
 ### Changed

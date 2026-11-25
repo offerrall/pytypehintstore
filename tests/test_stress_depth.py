@@ -283,7 +283,8 @@ def test_a_schema_the_core_compiles_but_cannot_be_named_fails_at_open(store_dir)
     `fingerprint` gives in before `struct_of` does — the store is walking a
     schema the core has just finished building, from a stack the core has
     already been down once. So there is a band of depths where the class is a
-    perfectly good contract and no store can be opened on it.
+    perfectly good contract and no store can be opened on it. Since pytypehint
+    1.3.0 the core gives in at the same depth, and the band can be empty.
 
     That is allowed: it is loud. What would not be allowed is a half-opened
     store, so the debris is checked too — the fingerprint is read before the
@@ -307,9 +308,8 @@ def test_a_schema_the_core_compiles_but_cannot_be_named_fails_at_open(store_dir)
             high = middle - 1
 
     top = chain(low + 1, "Window")[0]
-    # The core is happy with it; only the store is not.
-    assert struct_of(top) is not None
-
+    # The core may be happy with it, or, since pytypehint 1.3.0, give in at the
+    # same depth: the window can be empty. Either way the store fails loudly.
     with pytest.raises(RecursionError):
         store_of(top, str(store_dir))
 
