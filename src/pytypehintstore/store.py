@@ -31,6 +31,16 @@ _ROW_ID = re.compile(r"-?[0-9]+")
 _MIN_RETRY = 0.1
 
 
+
+# Frames of stack a row must leave free when it is accepted (see _accepted).
+_HEADROOM = 64
+
+
+def _with_headroom(frames: int, check):
+    """Run `check` `frames` calls deeper than the caller."""
+    return check() if frames == 0 else _with_headroom(frames - 1, check)
+
+
 class Store:
     """Rows of one validated dataclass, kept in memory and mirrored to JSON."""
 
@@ -50,6 +60,10 @@ class Store:
         self._keep = int(keep)
 
         self._rows: dict[int, object] = {}
+        # Each row as it is written, encoded once when the row is accepted: a
+        # dump reuses it, so a row that was accepted can always be written, and
+        # a dump costs no encoding.
+        self._wire: dict[int, object] = {}
         self._next_id = 1
 
         self._lock = threading.Lock()
@@ -80,10 +94,11 @@ class Store:
     def add(self, obj) -> int:
         with self._lock:
             self._open()
-            row = self._accepted(obj)
+            row, wire = self._accepted(obj)
             row_id = self._next_id
             self._next_id += 1
             self._rows[row_id] = row
+            self._wire[row_id] = wire
             self._touch()
         return row_id
 
@@ -100,14 +115,16 @@ class Store:
             self._open()
             if row_id not in self._rows:
                 raise KeyError(row_id)
-            row = self._accepted(obj)
+            row, wire = self._accepted(obj)
             self._rows[row_id] = row
+            self._wire[row_id] = wire
             self._touch()
 
     def remove(self, row_id: int) -> None:
         with self._lock:
             self._open()
             del self._rows[row_id]
+            del self._wire[row_id]
             self._touch()
 
     def all(self) -> list[tuple[int, object]]:
@@ -166,13 +183,19 @@ class Store:
             raise StoreError(f"{self._name}: store is closed")
 
     # A row is accepted by making the round trip it will make anyway. What comes
-    # back is what the store keeps; what build() refuses travels out in the
-    # core's own words.
-    def _accepted(self, obj):
+    # back is what the store keeps, with the encoding the file will carry; what
+    # build() refuses travels out in the core's own words.
+    def _accepted(self, obj) -> tuple[object, object]:
         if type(obj) is not self._cls:
             raise SchemaTypeError(
                 f"expected {self._cls.__name__}, got {type(obj).__name__}")
 
+        # Checked with _HEADROOM frames of stack to spare: a dump, a close() or
+        # the next open meets the row from deeper than add() did, and a row
+        # accepted at the very edge of the stack would fail there instead.
+        return _with_headroom(_HEADROOM, lambda: self._round_trip(obj))
+
+    def _round_trip(self, obj) -> tuple[object, object]:
         row = encode(self._schema, obj)
         built = self._schema.build(self._schema.decode(row))
 
@@ -181,12 +204,14 @@ class Store:
         # write, and such a row would freeze every later dump — a dump is the
         # whole file or nothing — surfacing only at close(), as an error from
         # another library. Asked after build(), so the core still speaks first.
+        # Written as the dump writes it, nested as deep as it sits in the file.
         try:
-            json.dumps(row, ensure_ascii=False).encode("utf-8")
+            json.dumps({"rows": {"0": row}}, indent=2,
+                       ensure_ascii=False).encode("utf-8")
         except UnicodeEncodeError as e:
             raise SchemaValueError(f"cannot be written as UTF-8: {e}") from e
 
-        return built
+        return built, row
 
     # ---- the shadow --------------------------------------------------------
 
@@ -241,8 +266,7 @@ class Store:
             raise
 
     def _serialize(self) -> str:
-        rows = {str(row_id): encode(self._schema, self._rows[row_id])
-                for row_id in sorted(self._rows)}
+        rows = {str(row_id): self._wire[row_id] for row_id in sorted(self._rows)}
         payload = {"v": _VERSION, "next_id": self._next_id, "rows": rows}
         return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
@@ -338,7 +362,9 @@ class Store:
                 raise StoreLoadError(
                     f"{self._name}: row id {key!r} is already taken by another key")
 
-            self._rows[row_id] = self._build(row_id, row)
+            built = self._build(row_id, row)
+            self._rows[row_id] = built
+            self._wire[row_id] = encode(self._schema, built)
 
         highest = max(self._rows, default=0)
         stored = payload.get("next_id")

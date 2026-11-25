@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.1 - 2026-11-25
+
+### Fixed
+
+- A row accepted at the edge of the stack could fail later: `close()` or the
+  writer encoded it again from deeper than `add()` had, and the next open built
+  it from deeper still, so a row `add()` took might not be written or reopened.
+  A row is now encoded once when it is accepted and the dump reuses that
+  encoding, the write check uses the dump's own JSON settings and nesting, and
+  the check runs with 64 frames of stack to spare. The file format and the
+  fingerprints are unchanged.
+- CI ran on pushes to `master`, a branch the repository does not have: it runs
+  on `main` now.
+
 ## 1.1.0 - 2026-11-25
 
 ### Changed
