@@ -217,6 +217,12 @@ def test_chain_of_twenty_levels_survives_a_store(store_dir, open_store, file_of,
     assert again.add(obj) == row_id + 1
 
 
+# Running out of stack while it materialises a default, pytypehint 1.3.0 reports
+# a TypeError that names the RecursionError ("default could not be
+# materialized: maximum recursion depth exceeded"). Both are the loud failure.
+DEEP = (RecursionError, TypeError)
+
+
 def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
     """Bisect the ladder until something gives, and check what gave.
 
@@ -235,14 +241,14 @@ def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
         try:
             struct_of(chain(depth, f"C{depth}")[0])
             return True
-        except RecursionError:
+        except DEEP:
             return False
 
     def named(depth):
         try:
             fingerprint(struct_of(chain(depth, f"N{depth}")[0]))
             return True
-        except RecursionError:
+        except DEEP:
             return False
 
     def deepest(predicate):
@@ -273,7 +279,7 @@ def test_the_depth_that_breaks_is_a_recursion_error_and_not_a_short_row():
     obj = nested(ladder)
     assert schema.build(schema.decode(encode(schema, obj))) == obj
 
-    with pytest.raises(RecursionError):
+    with pytest.raises(DEEP, match="recursion"):
         fingerprint(struct_of(chain(core + 1, "Past")[0]))
 
 
